@@ -37,6 +37,8 @@
                                 </div>
                               </div>
                             </div>
+                            <!-- <div id="notification"></div> -->
+                            <p v-if="notification">{{notificationMsg}}</p>
                           </div>
                           <input v-if="userNotJoined" class="form-control" type="text" v-model="username" v-on:keyup.13="connectClientWithUsername" placeholder="Your username">
                           <input v-else class="form-control" type="text" v-model="message" v-on:keyup.13="handleInputTextKeypress" placeholder="Your message">
@@ -51,6 +53,7 @@
 
 <script>
 import {bus} from '../app';
+import _ from 'lodash';
 var moment = require('moment');
 
     export default {
@@ -75,7 +78,9 @@ var moment = require('moment');
             message: null,
             userNotJoined: true,
             newChannel: '',
-            showAddChannelInput: false
+            showAddChannelInput: false,
+            notification: false,
+            notificationMsg: '',
           }
         },
         mounted() {
@@ -97,7 +102,6 @@ var moment = require('moment');
               device: 'browser'
             })
             .then(function (response) {
-              // console.log(response);
               handler(response.data);
               vm.username = '';
             })
@@ -115,10 +119,16 @@ var moment = require('moment');
               vm.tc.messagingClient = client;
               vm.updateConnectedUI();
               vm.loadChannelList(vm.joinGeneralChannel);
-              // tc.messagingClient.on('channelAdded', $.throttle(tc.loadChannelList));
-              // tc.messagingClient.on('channelRemoved', $.throttle(tc.loadChannelList));
-              // tc.messagingClient.on('tokenExpired', refreshToken);
+              vm.tc.messagingClient.on('channelAdded', _.throttle(vm.loadChannelList));
+              vm.tc.messagingClient.on('channelRemoved', _.throttle(vm.loadChannelList));
+              vm.tc.messagingClient.on('tokenExpired', vm.refreshToken);
             });
+          },
+          refreshToken(){
+            this.fetchAccessToken(this.tc.username, vm.setNewToken);
+          },
+          setNewToken(tokenResponse) {
+            this.tc.accessManager.updateToken(tokenResponse.token);
           },
           loadChannelList(handler){
             if (this.tc.messagingClient === undefined) {
@@ -171,7 +181,6 @@ var moment = require('moment');
             }
           },
           addChannel(channel){
-            console.log('adding channel');
             if (channel.uniqueName === 'general') {
               this.tc.generalChannel = channel;
             }
@@ -191,9 +200,15 @@ var moment = require('moment');
               .then(this.initChannelEvents);
           },
           leaveCurrentChannel() {
+            let vm = this;
             if (this.tc.currentChannel) {
               return this.tc.currentChannel.leave().then(function(leftChannel) {
                 console.log('left ' + leftChannel.friendlyName);
+                leftChannel.removeListener('messageAdded', vm.addMessageToList);
+                leftChannel.removeListener('typingStarted', vm.showTypingStarted);
+                leftChannel.removeListener('typingEnded', vm.hideTypingStarted);
+                leftChannel.removeListener('memberJoined', vm.notifyMemberJoined);
+                leftChannel.removeListener('memberLeft', vm.notifyMemberLeft);
               });
             } else {
               console.log("resolving");
@@ -223,7 +238,6 @@ var moment = require('moment');
             let vm = this;
             this.tc.currentChannel.getMessages(50).then(function (messages) {
               vm.showMessages = true;
-              console.log(messages.items);
               vm.tc.messagesArray = messages.items;
               vm.userNotJoined = false
               // messages.items.forEach(vm.addMessageToList);
@@ -231,12 +245,41 @@ var moment = require('moment');
           },
         initChannelEvents() {
           console.log(this.tc.currentChannel.friendlyName + ' ready.');
-          // tc.currentChannel.on('messageAdded', tc.addMessageToList);
-          // tc.currentChannel.on('typingStarted', showTypingStarted);
-          // tc.currentChannel.on('typingEnded', hideTypingStarted);
-          // tc.currentChannel.on('memberJoined', notifyMemberJoined);
-          // tc.currentChannel.on('memberLeft', notifyMemberLeft);
+          this.tc.currentChannel.on('messageAdded', this.addMessageToList);
+          this.tc.currentChannel.on('typingStarted', this.showTypingStarted);
+          this.tc.currentChannel.on('typingEnded', this.hideTypingStarted);
+          this.tc.currentChannel.on('memberJoined', this.notifyMemberJoined);
+          this.tc.currentChannel.on('memberLeft', this.notifyMemberLeft);
           // $inputText.prop('disabled', false).focus();
+        },
+        showTypingStarted(member) {
+          console.log(member.identity + ' is typing...');
+          this.notificationMsg = member.identity + ' is typing...';
+          this.notification = true;
+        },
+
+        hideTypingStarted(member) {
+          this.notificationMsg = '';
+          this.notification = false;
+        },
+        notifyMemberJoined(member) {
+          console.log("joining");
+          console.log(member.identity + ' joined the channel');
+          // notify(member.identity + ' joined the channel')
+        },
+        notifyMemberLeft(member) {
+          console.log("leaving");
+          console.log(member);
+          console.log(member.identity + ' left the channel');
+          // notify(member.identity + ' left the channel');
+        },
+        notify(message) {
+          var row = $('<div>').addClass('col-md-12');
+          row.loadTemplate('#member-notification-template', {
+            status: message
+          });
+          tc.$messageList.append(row);
+          scrollToMessageListBottom();
         },
         updateChannelUI(selectedChannel) {
 
@@ -257,26 +300,16 @@ var moment = require('moment');
           this.tc.currentChannelContainer.classList.add('selected-channel');
         },
         addMessageToList(message) {
-          var rowDiv = $('<div>').addClass('row no-margin');
-          rowDiv.loadTemplate($('#message-template'), {
-            username: message.author,
-            date: dateFormatter.getTodayDate(message.timestamp),
-            body: message.body
-          });
-          if (message.author === tc.username) {
-            rowDiv.addClass('own-message');
-          }
-
-          tc.$messageList.append(rowDiv);
-          scrollToMessageListBottom();
+          console.log(message);
+          this.loadMessages();
         },
         handleInputTextKeypress() {
           let vm = this;
           this.tc.currentChannel.sendMessage(this.message);
           this.message = '';
-          setTimeout(function(){
-             vm.loadMessages();
-           }, 3000);
+          // setTimeout(function(){
+          //    vm.loadMessages();
+          //  }, 3000);
       },
       handleNewChannelInputKeypress(event) {
         let vm = this;

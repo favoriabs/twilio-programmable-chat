@@ -1911,6 +1911,8 @@ __webpack_require__.r(__webpack_exports__);
 "use strict";
 __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var _app__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ../app */ "./resources/js/app.js");
+/* harmony import */ var lodash__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! lodash */ "./node_modules/lodash/lodash.js");
+/* harmony import */ var lodash__WEBPACK_IMPORTED_MODULE_1___default = /*#__PURE__*/__webpack_require__.n(lodash__WEBPACK_IMPORTED_MODULE_1__);
 //
 //
 //
@@ -1962,6 +1964,9 @@ __webpack_require__.r(__webpack_exports__);
 //
 //
 //
+//
+//
+
 
 
 var moment = __webpack_require__(/*! moment */ "./node_modules/moment/moment.js");
@@ -1988,7 +1993,9 @@ var moment = __webpack_require__(/*! moment */ "./node_modules/moment/moment.js"
       message: null,
       userNotJoined: true,
       newChannel: '',
-      showAddChannelInput: false
+      showAddChannelInput: false,
+      notification: false,
+      notificationMsg: ''
     };
   },
   mounted: function mounted() {
@@ -2010,7 +2017,6 @@ var moment = __webpack_require__(/*! moment */ "./node_modules/moment/moment.js"
         identity: this.tc.username,
         device: 'browser'
       }).then(function (response) {
-        // console.log(response);
         handler(response.data);
         vm.username = '';
       })["catch"](function (error) {
@@ -2024,10 +2030,17 @@ var moment = __webpack_require__(/*! moment */ "./node_modules/moment/moment.js"
       new Twilio.Chat.Client.create(token).then(function (client) {
         vm.tc.messagingClient = client;
         vm.updateConnectedUI();
-        vm.loadChannelList(vm.joinGeneralChannel); // tc.messagingClient.on('channelAdded', $.throttle(tc.loadChannelList));
-        // tc.messagingClient.on('channelRemoved', $.throttle(tc.loadChannelList));
-        // tc.messagingClient.on('tokenExpired', refreshToken);
+        vm.loadChannelList(vm.joinGeneralChannel);
+        vm.tc.messagingClient.on('channelAdded', lodash__WEBPACK_IMPORTED_MODULE_1___default.a.throttle(vm.loadChannelList));
+        vm.tc.messagingClient.on('channelRemoved', lodash__WEBPACK_IMPORTED_MODULE_1___default.a.throttle(vm.loadChannelList));
+        vm.tc.messagingClient.on('tokenExpired', vm.refreshToken);
       });
+    },
+    refreshToken: function refreshToken() {
+      this.fetchAccessToken(this.tc.username, vm.setNewToken);
+    },
+    setNewToken: function setNewToken(tokenResponse) {
+      this.tc.accessManager.updateToken(tokenResponse.token);
     },
     loadChannelList: function loadChannelList(handler) {
       if (this.tc.messagingClient === undefined) {
@@ -2081,8 +2094,6 @@ var moment = __webpack_require__(/*! moment */ "./node_modules/moment/moment.js"
       }
     },
     addChannel: function addChannel(channel) {
-      console.log('adding channel');
-
       if (channel.uniqueName === 'general') {
         this.tc.generalChannel = channel;
       }
@@ -2099,9 +2110,16 @@ var moment = __webpack_require__(/*! moment */ "./node_modules/moment/moment.js"
       }).then(this.initChannelEvents);
     },
     leaveCurrentChannel: function leaveCurrentChannel() {
+      var vm = this;
+
       if (this.tc.currentChannel) {
         return this.tc.currentChannel.leave().then(function (leftChannel) {
           console.log('left ' + leftChannel.friendlyName);
+          leftChannel.removeListener('messageAdded', vm.addMessageToList);
+          leftChannel.removeListener('typingStarted', vm.showTypingStarted);
+          leftChannel.removeListener('typingEnded', vm.hideTypingStarted);
+          leftChannel.removeListener('memberJoined', vm.notifyMemberJoined);
+          leftChannel.removeListener('memberLeft', vm.notifyMemberLeft);
         });
       } else {
         console.log("resolving");
@@ -2129,18 +2147,43 @@ var moment = __webpack_require__(/*! moment */ "./node_modules/moment/moment.js"
       var vm = this;
       this.tc.currentChannel.getMessages(50).then(function (messages) {
         vm.showMessages = true;
-        console.log(messages.items);
         vm.tc.messagesArray = messages.items;
         vm.userNotJoined = false; // messages.items.forEach(vm.addMessageToList);
       });
     },
     initChannelEvents: function initChannelEvents() {
-      console.log(this.tc.currentChannel.friendlyName + ' ready.'); // tc.currentChannel.on('messageAdded', tc.addMessageToList);
-      // tc.currentChannel.on('typingStarted', showTypingStarted);
-      // tc.currentChannel.on('typingEnded', hideTypingStarted);
-      // tc.currentChannel.on('memberJoined', notifyMemberJoined);
-      // tc.currentChannel.on('memberLeft', notifyMemberLeft);
-      // $inputText.prop('disabled', false).focus();
+      console.log(this.tc.currentChannel.friendlyName + ' ready.');
+      this.tc.currentChannel.on('messageAdded', this.addMessageToList);
+      this.tc.currentChannel.on('typingStarted', this.showTypingStarted);
+      this.tc.currentChannel.on('typingEnded', this.hideTypingStarted);
+      this.tc.currentChannel.on('memberJoined', this.notifyMemberJoined);
+      this.tc.currentChannel.on('memberLeft', this.notifyMemberLeft); // $inputText.prop('disabled', false).focus();
+    },
+    showTypingStarted: function showTypingStarted(member) {
+      console.log(member.identity + ' is typing...');
+      this.notificationMsg = member.identity + ' is typing...';
+      this.notification = true;
+    },
+    hideTypingStarted: function hideTypingStarted(member) {
+      this.notificationMsg = '';
+      this.notification = false;
+    },
+    notifyMemberJoined: function notifyMemberJoined(member) {
+      console.log("joining");
+      console.log(member.identity + ' joined the channel'); // notify(member.identity + ' joined the channel')
+    },
+    notifyMemberLeft: function notifyMemberLeft(member) {
+      console.log("leaving");
+      console.log(member);
+      console.log(member.identity + ' left the channel'); // notify(member.identity + ' left the channel');
+    },
+    notify: function notify(message) {
+      var row = $('<div>').addClass('col-md-12');
+      row.loadTemplate('#member-notification-template', {
+        status: message
+      });
+      tc.$messageList.append(row);
+      scrollToMessageListBottom();
     },
     updateChannelUI: function updateChannelUI(selectedChannel) {
       var channelLists = this.$refs.channelList;
@@ -2158,27 +2201,15 @@ var moment = __webpack_require__(/*! moment */ "./node_modules/moment/moment.js"
       this.tc.currentChannelContainer.classList.add('selected-channel');
     },
     addMessageToList: function addMessageToList(message) {
-      var rowDiv = $('<div>').addClass('row no-margin');
-      rowDiv.loadTemplate($('#message-template'), {
-        username: message.author,
-        date: dateFormatter.getTodayDate(message.timestamp),
-        body: message.body
-      });
-
-      if (message.author === tc.username) {
-        rowDiv.addClass('own-message');
-      }
-
-      tc.$messageList.append(rowDiv);
-      scrollToMessageListBottom();
+      console.log(message);
+      this.loadMessages();
     },
     handleInputTextKeypress: function handleInputTextKeypress() {
       var vm = this;
       this.tc.currentChannel.sendMessage(this.message);
-      this.message = '';
-      setTimeout(function () {
-        vm.loadMessages();
-      }, 3000);
+      this.message = ''; // setTimeout(function(){
+      //    vm.loadMessages();
+      //  }, 3000);
     },
     handleNewChannelInputKeypress: function handleNewChannelInputKeypress(event) {
       var vm = this;
@@ -56010,7 +56041,11 @@ var render = function() {
                       )
                     }),
                     0
-                  )
+                  ),
+                  _vm._v(" "),
+                  _vm.notification
+                    ? _c("p", [_vm._v(_vm._s(_vm.notificationMsg))])
+                    : _vm._e()
                 ]),
                 _vm._v(" "),
                 _vm.userNotJoined
